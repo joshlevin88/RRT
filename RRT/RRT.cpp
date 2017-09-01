@@ -3,7 +3,10 @@
 #include<queue>
 #include<math.h>
 #include<time.h>
+
 #define PI 3.14159265358979323846f
+
+using std::vector;
 
 // Tree data structure
 struct node{
@@ -20,25 +23,36 @@ struct node{
 };
 typedef struct node node;
 
+struct disp{
+	float length;
+	float cost;
+};
+typedef struct disp disp;
+
 // Constants
 const float V = 5.0f;
-const float t_iter = 0.5f;
+const float ts = 0.5f;
 const float bf = 1.5f;
 const float t_int = 0.5f;
 const int max_tr_deg = 50;
-const int maz_zr = 1;
+const int max_zr = 1;
 const float coll_dist = 0.2f;
 const float ATA_dist = 9.0f;
-const float td = 0.23f;
+const float t_td = 0.23f;
 const float dt_max = 1.0f;
 const int near_max = 5;
 
 // Functions
 node* new_node(float, float, float, float, int, int, int, float, float, node*);
-node* rand_node(int);
+node* rand_node_coord(node*, int);
 node* add_sibling(node*, float, float, float, float, int, int, int, float, float);
 node* add_child(node*, float, float, float, float, int, int, int, float, float);
 void trim_end_states(node*, node*, int, int, float);
+void extend_tree(node*, node*);
+node* steer(node*, node*, node*);
+disp disp_info(node*, node*);
+vector<float> generateRange(float, float, float);
+vector<float> linspace(float, float, int);
 /*
 node* search_tree(node*, int);
 node* compare_tree(node*);
@@ -62,20 +76,33 @@ int main()
 	int gn = 1;
 	node* goal = new_node(45, 25, 5, 0, 0, 0, 0, 0, 0, NULL);
 
+	node* last = second;
 	while (!done){
 
 		time_t start, end;
 		double elapsed;
-		start = time(NULL);
 		bool done_iter = false;
 
+		node* rand_node = new_node(0, 0, 0, 0, 0, 0, 0, 0, 0, NULL);
+
+		start = time(NULL);
 		while (!done_iter){
+
 			end = time(NULL);
 			elapsed = difftime(end, start);
-			if (elapsed >= t_iter)
+			if (elapsed >= t_int){
 				done_iter = true;
+				break;
+			}
+
+			rand_node_coord(rand_node, iter);
+
+			last = steer(root, last, rand_node);
+
+			iter++;
 		}
-		printf("Interval finished!");
+		printf("last - coord: [%.1f, %.1f, %.1f] - heading: %.1f \n", last->coord[0], last->coord[1], last->coord[2], last->hdg * 180 / PI);
+		printf("iteration: %d    rand_node->coord[0]: %.1f\n", iter, rand_node->coord[0]);
 	}
 }
 
@@ -103,9 +130,8 @@ node* new_node(float coord_x, float coord_y, float coord_z, float hdg, int tr_de
 }
 
 // Generate random node (revisit because this will create garbage)
-node* rand_node(int iter)
+node* rand_node_coord(node* rand_node, int iter)
 {
-	node* rand_node = new_node(0, 0, 0, 0, 0, 0, 0, 0, 0, NULL);
 	int bias_freq = 3;
 	float goal_coord[3] = {50.0f, 30.0f, 10.0f};
 	float x_max = 50.0f;
@@ -165,6 +191,113 @@ void trim_end_states(node* current, node* from, int tr_deg, int zr, float dt)
 	current->hdg = fmod(current->hdg, 2 * PI);
 	if (current->hdg > PI) current->hdg = -2 * PI + current->hdg;
 	else if (current->hdg < -PI) current->hdg = 2 * PI + current->hdg; 
+}
+
+void extend_tree(node* root, node* rand_node)
+{
+
+}
+
+node* steer(node* root, node* from, node* towards)
+{
+	// Add time-delayed node
+	node* td = add_child(root, 0, 0, 0, 0, 0, 0, 1, from->time + t_td, 0);
+	trim_end_states(td, from, from->tr_deg, from->zr, t_td);
+	disp d = disp_info(from, td);
+	td->cost = d.cost;
+
+	node* temp = new_node(0, 0, 0, 0, 0, 0, 0, 0, 0, NULL);
+	disp d2 = disp_info(td, towards);
+	float L = d.length + d2.length;
+	float dt;
+	int tr_deg;
+	int zr;
+	float min_norm = 1000;
+	float norm_temp;
+	int i = 0;
+	int j, k;
+	float dt_i = ts;
+
+	// Find best trim primitive and time spent along it
+	do{
+		i++;
+		j = 0;
+		for (int tr_deg_i = -max_tr_deg; tr_deg_i <= max_tr_deg; tr_deg_i += 10){
+			j++;
+			k = 0;
+			for (int zr_i = -max_zr; zr_i <= max_zr; zr_i += 1){
+				k++;
+				trim_end_states(temp, from, tr_deg_i, zr_i, dt_i);
+				norm_temp = sqrtf(powf(towards->coord[0] - temp->coord[0], 2) + powf(towards->coord[1] - temp->coord[1], 2) + powf(towards->coord[2] - temp->coord[2], 2));
+				if (norm_temp < min_norm){
+					min_norm = norm_temp;
+					tr_deg = tr_deg_i;
+					zr = zr_i;
+					dt = dt_i;
+				}
+			}
+		}
+		dt_i += ts;
+	} while (dt_i <= L / V);
+	if (dt > dt_max) dt = dt_max;
+
+	td->tr_deg = tr_deg;
+	td->zr = zr;
+
+	node* last = td;
+	dt_i = ts;
+	if (ts > dt) dt_i = dt;
+
+	// Add intermediate nodes along trim primitive to tree
+	do{
+		temp = add_child(root, 0, 0, 0, 0, tr_deg, zr, 0, td->time + dt_i, 0);
+		trim_end_states(temp, td, tr_deg, zr, dt_i);
+		d = disp_info(last, temp);
+		temp->cost = d.cost;
+
+		last = temp;
+		dt_i += ts;
+	} while (dt_i <= dt);
+
+	return last;
+}
+
+disp disp_info(node* from, node* to)
+{
+	float L;
+
+	float r = sqrtf(powf(to->coord[0] - from->coord[0], 2) + powf(to->coord[1] - from->coord[1], 2) + powf(to->coord[2] - from->coord[2], 2));
+	float theta = atan2f(to->coord[1] - from->coord[1], to->coord[0] - from->coord[0]) - from->hdg;
+	if (theta > PI) theta = -2 * PI + theta;
+	else if (theta < -PI) theta = 2 * PI + theta;
+
+	if (theta != 0) L = r*theta / sin(theta);
+	else L = r;
+
+	disp d = {L, L};
+
+	return d;
+}
+
+vector<float> generateRange(float a, float b, float c) {
+	vector<float> array;
+	if (a > c) array.push_back(a);
+	while (a <= c) {
+		array.push_back(a);
+		a += b;        
+	}
+	return array;
+}
+
+vector<float> linspace(float a, float b, int n) {
+	vector<float> array;
+	float step = (b - a) / (n - 1);
+
+	while (a <= b) {
+		array.push_back(a);
+		a += step;
+	}
+	return array;
 }
 
 /*
