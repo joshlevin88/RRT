@@ -1,14 +1,12 @@
-﻿Build started 2017-09-04 5:47:29 PM.
+﻿Build started 2017-09-05 12:53:45 PM.
      1>Project "D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\RRT.vcxproj" on node 2 (Build target(s)).
-     1>ClCompile:
-         C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\CL.exe /c /AI"D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\mathlib" /ZI /nologo /W3 /WX- /Od /Oy- /D WIN32 /D _DEBUG /D _CONSOLE /D _LIB /D _UNICODE /D UNICODE /Gm /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Fo"Debug\\" /Fd"Debug\vc120.pdb" /Gd /TP /analyze- /errorReport:prompt RRT.cpp
-         RRT.cpp
-       Link:
-         C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\link.exe /ERRORREPORT:PROMPT /OUT:"D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\Debug\RRT.exe" /INCREMENTAL /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\Debug\RRT.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\Debug\RRT.lib" /MACHINE:X86 Debug\RRT.obj
+     1>Link:
+         C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\link.exe /ERRORREPORT:PROMPT /OUT:"D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\Debug\RRT.exe" /INCREMENTAL /NOLOGO libmx.lib libeng.lib libmex.lib libmat.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\Debug\RRT.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\Debug\RRT.lib" /MACHINE:X86 Debug\RRT.obj
          Debug\stdafx.obj
-         RRT.vcxproj -> D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\Debug\RRT.exe
-     1>Done Building Project "D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\RRT.vcxproj" (Build target(s)).
+     1>RRT.obj : error LNK2019: unresolved external symbol _engOpen referenced in function _main
+     1>D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\Debug\RRT.exe : fatal error LNK1120: 1 unresolved externals
+     1>Done Building Project "D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\RRT.vcxproj" (Build target(s)) -- FAILED.
 
-Build succeeded.
+Build FAILED.
 
-Time Elapsed 00:00:01.39
+Time Elapsed 00:00:00.32

@@ -1,15 +1,24 @@
+#include "stdafx.h"
+#include <Engine.h>
 #include<iostream>
-#include<vector>
-#include<queue>
 #include<math.h>
 #include<time.h>
 
+/*#include<queue>
+#include<vector>
+*/
+
+#pragma comment ( lib, "libmat.lib" )
+#pragma comment ( lib, "libmx.lib"  )
+#pragma comment ( lib, "libmex.lib" )
+#pragma comment ( lib, "libeng.lib" )
+
 #define PI 3.14159265358979323846f
 
-using std::vector;
+//using std::vector;
 
 // Tree
-struct node{
+typedef struct node{
 	float coord[3];
 	float hdg;
 	int tr_deg;
@@ -20,33 +29,30 @@ struct node{
 	struct node* next;
 	struct node* child;
 	struct node* parent;
-};
-typedef struct node node;
+} node;
 
 // Displacement
-struct disp{
+typedef struct disp{
 	float length;
 	float cost;
-};
-typedef struct disp disp;
+} disp;
 
 // List for nearest sorting
-struct list{
+typedef struct list{
 	struct node* node;
 	float nearness;
-};
-typedef struct list list;
+} list;
 
 // Constants
 const float V = 5.0f;
 const float ts = 0.5f;
 const float bf = 1.5f;
-const float t_int = 0.5f;
-const int max_tr_deg = 50;
+const int max_tr_deg = 60;
 const int max_zr = 1;
 const float coll_dist = 0.2f;
 const float ATA_dist = 9.0f;
 const float t_td = 0.23f;
+const float t_int = 0.25f;
 const float dt_max = 1.0f;
 const int near_max = 5;
 const float x_max = 50.0f;
@@ -55,11 +61,11 @@ const float z_max = 10.0f;
 
 // Functions
 node* new_node(float, float, float, float, int, int, int, float, float, node*);
-node* rand_node_coord(node*, int);
+node* rand_node_coord(node*, node*, int);
 node* add_sibling(node*, node*);
 node* add_child(node*, node*);
 void trim_end_states(node*, node*, int, int, float);
-void extend_tree(node*, node*);
+node* extend_tree(node*, node*);
 node* steer_an(node*, node*);
 disp disp_info(node*, node*);
 bool collision(node*);
@@ -68,7 +74,7 @@ node* steer(node*, node*);
 list* nearest(node*, node*);
 int compare(const void*, const void*);
 int tree_size(node*);
-int add_to_array(node* n, node* to, list arr[], int i);
+int add_to_array(node*, node*, list*, int);
 /*
 vector<float> generateRange(float, float, float);
 vector<float> linspace(float, float, int);
@@ -80,22 +86,38 @@ void backwards(node*);
 
 int main()
 {
+	// For plotting in MATLAB
+	Engine *m_pEngine;
+	m_pEngine = engOpen("null");
+	mxArray* from_x = mxCreateDoubleMatrix(1, 1, mxREAL);
+	mxArray* from_y = mxCreateDoubleMatrix(1, 1, mxREAL);
+	mxArray* to_x = mxCreateDoubleMatrix(1, 1, mxREAL);
+	mxArray* to_y = mxCreateDoubleMatrix(1, 1, mxREAL);
+	double* p_from_x = mxGetPr(from_x);
+	double* p_from_y = mxGetPr(from_y);
+	double* p_to_x = mxGetPr(to_x);
+	double* p_to_y = mxGetPr(to_y);
+	node* tmp1 = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
+	node* tmp2 = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
+
+	// Initialize tree with two nodes
 	node* root = new_node(1.0f, 15.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
 	node* second = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 1.0f, 0.0f, NULL);
 	trim_end_states(second, root, 0, 0, 1.0f);
 	add_child(root, second);
 
-	bool path_found = false;
+	//bool path_found = false;
 	bool done = false;
 	int iter = 0;
-	node* commited_root = (node*)malloc(sizeof(node));
-	commited_root = root;
-	int gn = 1;
-	node* goal = new_node(45.0f, 25.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
-
-	node* temp;
-	node* prim_root;
+	//node* commited_root = (node*)malloc(sizeof(node));
+	//commited_root = root;
+	//int gn = 1;
+	node* goal_node = new_node(45.0f, 25.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
 	node* rand_node = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
+	node* prim_root;
+
+	list* nearest_list;
+
 	while (!done){
 
 		time_t start, end;
@@ -105,6 +127,7 @@ int main()
 		start = time(NULL);
 		while (!done_iter){
 
+			// Keep track of real-time computation interval
 			end = time(NULL);
 			elapsed = difftime(end, start);
 			if (elapsed >= t_int){
@@ -112,20 +135,52 @@ int main()
 				break;
 			}
 
-			rand_node_coord(rand_node, iter);
+			// Generate a random node
+			rand_node_coord(rand_node, goal_node, iter);
 
-			temp = root;
-			while (temp->child) temp = temp->child;
+			// Extend tree
+			prim_root = extend_tree(root, rand_node);
 
-			prim_root = steer_an(temp, rand_node);
-			if (collision(prim_root) == true) free_tree(prim_root);
-			else {
-				add_child(temp, prim_root);
+			// Plot in MATLAB
+			
+			if (prim_root != NULL){
+
+				*p_from_x = (double)prim_root->parent->coord[0];
+				*p_from_y = (double)prim_root->parent->coord[1];
+				*p_to_x = (double)prim_root->coord[0];
+				*p_to_y = (double)prim_root->coord[1];
+
+				engPutVariable(m_pEngine, "from_x", from_x);
+				engPutVariable(m_pEngine, "from_y", from_y);
+				engPutVariable(m_pEngine, "to_x", to_x);
+				engPutVariable(m_pEngine, "to_y", to_y);
+
+				engEvalString(m_pEngine, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
+
+				while (prim_root->child){
+
+					prim_root = prim_root->child;
+
+					*p_from_x = (double)prim_root->parent->coord[0];
+					*p_from_y = (double)prim_root->parent->coord[1];
+					*p_to_x = (double)prim_root->coord[0];
+					*p_to_y = (double)prim_root->coord[1];
+
+					engPutVariable(m_pEngine, "from_x", from_x);
+					engPutVariable(m_pEngine, "from_y", from_y);
+					engPutVariable(m_pEngine, "to_x", to_x);
+					engPutVariable(m_pEngine, "to_y", to_y);
+
+					engEvalString(m_pEngine, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
+				}
 			}
 
 			iter++;
 		}
 
+		printf("Number of iterations: %d    Size of tree: %d\n", iter, tree_size(root));
+		nearest_list = nearest(root, goal_node);
+		printf("Distance to goal node: %.5f\n", nearest_list[0].nearness);
 	}
 }
 
@@ -153,16 +208,15 @@ node* new_node(float coord_x, float coord_y, float coord_z, float hdg, int tr_de
 }
 
 // Generate random node (revisit because this will create garbage)
-node* rand_node_coord(node* rand_node, int iter)
+node* rand_node_coord(node* rand_node, node* goal_node, int iter)
 {
-	int bias_freq = 3;
-	float goal_coord[3] = {50.0f, 30.0f, 10.0f};
+	int bias_freq = 100;
 
 	// Every bias_freq iterations, return goal node
 	if (iter % bias_freq == 0) {
-		rand_node->coord[0] = goal_coord[0];
-		rand_node->coord[1] = goal_coord[1];
-		rand_node->coord[2] = goal_coord[2];
+		rand_node->coord[0] = goal_node->coord[0];
+		rand_node->coord[1] = goal_node->coord[1];
+		rand_node->coord[2] = goal_node->coord[2];
 	}
 	else{
 		rand_node->coord[0] = ((float)rand() / (float)(RAND_MAX)) * x_max;
@@ -174,27 +228,27 @@ node* rand_node_coord(node* rand_node, int iter)
 }
 
 // Add node to tree
-node* add_child(node* n, node* new_n)
+node* add_child(node* existing_parent, node* new_child)
 {
-	if (n == NULL) return NULL;
+	if (existing_parent == NULL) return NULL;
 
-	if (n->child) return add_sibling(n->child, new_n);
+	if (existing_parent->child) return add_sibling(existing_parent->child, new_child);
 
 	else{
-		new_n->parent = n;
-		return n->child = new_n;
+		new_child->parent = existing_parent;
+		return existing_parent->child = new_child;
 	}
 }
 
 // Add node as sibling if parent node already has a child
-node* add_sibling(node* n, node* new_n)
+node* add_sibling(node* existing_child, node* new_next)
 {
-	if (n == NULL) return NULL;
+	if (existing_child == NULL) return NULL;
 
-	while (n->next) n = n->next;
+	while (existing_child->next) existing_child = existing_child->next;
 
-	new_n->parent = n->parent;
-	return n->next = new_n;
+	new_next->parent = existing_child->parent;
+	return existing_child->next = new_next;
 }
 
 // Calculate trim states (coordinates and heading) at end of trim primitive
@@ -219,15 +273,29 @@ void trim_end_states(node* current, node* from, int tr_deg, int zr, float dt)
 	else if (current->hdg < -PI) current->hdg = 2 * PI + current->hdg; 
 }
 
-void extend_tree(node* root, node* rand_node)
+// Extend tree
+node* extend_tree(node* root, node* rand_node)
 {
-
+	list* nearest_list = nearest(root, rand_node);
+	node* prim_root;
+	for (int i = 0; i <= 4; i++){
+		prim_root = steer_an(nearest_list[i].node, rand_node);
+		if (collision(prim_root) == false){
+			add_child(nearest_list[i].node, prim_root);
+			break;
+		}
+		else {
+			free_tree(prim_root);
+			prim_root = NULL;
+		}
+	}
+	return prim_root;
 }
 
 node* steer_an(node* from, node* towards)
 {
 	// Root of primtive is time-delayed node
-	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, from->time + t_td, 0.0f, NULL);
+	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, from->time + t_td, 0.0f, from);
 	trim_end_states(td, from, from->tr_deg, from->zr, t_td);
 	disp d = disp_info(from, td);
 	td->cost = d.cost;
@@ -327,7 +395,6 @@ void free_tree(node* n)
 	free(n);
 }
 
-
 list* nearest(node* root, node* to)
 {
 	list *list_arr = NULL;
@@ -350,7 +417,6 @@ list* nearest(node* root, node* to)
 	*/
 }
 
-
 int compare(const void* v1, const void* v2)
 {
 	const list *p1 = (list*)v1;
@@ -371,7 +437,7 @@ int tree_size(node* root)
 	}
 }
 
-int add_to_array(node* n, node* to, list arr[], int i)
+int add_to_array(node* n, node* to, list* arr, int i)
 {
 	if (n == NULL)
 		return i;
@@ -388,7 +454,7 @@ int add_to_array(node* n, node* to, list arr[], int i)
 node* steer(node* from, node* towards)
 {
 	// Root of primtive is time-delayed node
-	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, from->time + t_td, 0.0f, NULL);
+	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, from->time + t_td, 0.0f, from);
 	trim_end_states(td, from, from->tr_deg, from->zr, t_td);
 	disp d = disp_info(from, td);
 	td->cost = d.cost;
