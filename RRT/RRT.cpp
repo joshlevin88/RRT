@@ -3,10 +3,8 @@
 #include<iostream>
 #include<math.h>
 #include<time.h>
-
-/*#include<queue>
+#include<deque>
 #include<vector>
-*/
 
 #pragma comment ( lib, "libmat.lib" )
 #pragma comment ( lib, "libmx.lib"  )
@@ -14,8 +12,6 @@
 #pragma comment ( lib, "libeng.lib" )
 
 #define PI 3.14159265358979323846f
-
-//using std::vector;
 
 // Tree
 typedef struct node{
@@ -45,37 +41,44 @@ typedef struct list{
 
 // Constants
 const float V = 5.0f;
-const float ts = 0.5f;
+const float ts = 0.25f;
 const float bf = 1.5f;
 const int max_tr_deg = 60;
 const int max_zr = 1;
 const float coll_dist = 0.2f;
 const float ATA_dist = 9.0f;
 const float t_td = 0.23f;
-const float t_int = 0.25f;
+const float t_int = 0.5f;
 const float dt_max = 1.0f;
 const int near_max = 5;
 const float x_max = 50.0f;
 const float y_max = 30.0f;
 const float z_max = 10.0f;
+std::vector<node*> comm_vec;
 
 // Functions
 node* new_node(float, float, float, float, int, int, int, float, float, node*);
-node* rand_node_coord(node*, node*, int);
+void rand_node_coord(node*, node*, int);
 node* add_sibling(node*, node*);
 node* add_child(node*, node*);
 void trim_end_states(node*, node*, int, int, float);
 node* extend_tree(node*, node*);
 node* steer_an(node*, node*);
+node* steer_agile(node*, int);
 disp disp_info(node*, node*);
 bool collision(node*);
-void free_tree(node*);
-node* steer(node*, node*);
-list* nearest(node*, node*);
+void free_tree(node**);
+list* near(node*, node*);
 int compare(const void*, const void*);
 int tree_size(node*);
 int add_to_array(node*, node*, list*, int);
+void prune_tree(node**, node*);
+bool update_tree(node**, node*);
+std::deque<node*> root_to_end(node*);
+void add_to_commit(node*);
+
 /*
+node* steer(node*, node*);
 vector<float> generateRange(float, float, float);
 vector<float> linspace(float, float, int);
 node* search_tree(node*, int);
@@ -87,24 +90,31 @@ void backwards(node*);
 int main()
 {
 	// For plotting in MATLAB
-	Engine *m_pEngine;
-	m_pEngine = engOpen("null");
+	/*	
+	Engine *m_eng;
+	m_eng = engOpen("null");
 	mxArray* from_x = mxCreateDoubleMatrix(1, 1, mxREAL);
 	mxArray* from_y = mxCreateDoubleMatrix(1, 1, mxREAL);
 	mxArray* to_x = mxCreateDoubleMatrix(1, 1, mxREAL);
 	mxArray* to_y = mxCreateDoubleMatrix(1, 1, mxREAL);
+	mxArray* curr_x = mxCreateDoubleMatrix(1, 1, mxREAL);
+	mxArray* curr_y = mxCreateDoubleMatrix(1, 1, mxREAL);
 	double* p_from_x = mxGetPr(from_x);
 	double* p_from_y = mxGetPr(from_y);
 	double* p_to_x = mxGetPr(to_x);
 	double* p_to_y = mxGetPr(to_y);
-	node* tmp1 = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
-	node* tmp2 = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
+	double* p_curr_x = mxGetPr(curr_x);
+	double* p_curr_y = mxGetPr(curr_y);
+	*/
+	node* prim_root;
+	
 
 	// Initialize tree with two nodes
 	node* root = new_node(1.0f, 15.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
 	node* second = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 1.0f, 0.0f, NULL);
 	trim_end_states(second, root, 0, 0, 1.0f);
 	add_child(root, second);
+	add_to_commit(root);
 
 	//bool path_found = false;
 	bool done = false;
@@ -112,11 +122,8 @@ int main()
 	//node* commited_root = (node*)malloc(sizeof(node));
 	//commited_root = root;
 	//int gn = 1;
-	node* goal_node = new_node(45.0f, 25.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
-	node* rand_node = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
-	node* prim_root;
-
-	list* nearest_list;
+	node* goal = new_node(45.0f, 25.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
+	node* rand = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
 
 	while (!done){
 
@@ -136,13 +143,13 @@ int main()
 			}
 
 			// Generate a random node
-			rand_node_coord(rand_node, goal_node, iter);
+			rand_node_coord(rand, goal, iter);
 
 			// Extend tree
-			prim_root = extend_tree(root, rand_node);
+			prim_root = extend_tree(root, rand);
 
 			// Plot in MATLAB
-			
+			/*
 			if (prim_root != NULL){
 
 				*p_from_x = (double)prim_root->parent->coord[0];
@@ -150,12 +157,12 @@ int main()
 				*p_to_x = (double)prim_root->coord[0];
 				*p_to_y = (double)prim_root->coord[1];
 
-				engPutVariable(m_pEngine, "from_x", from_x);
-				engPutVariable(m_pEngine, "from_y", from_y);
-				engPutVariable(m_pEngine, "to_x", to_x);
-				engPutVariable(m_pEngine, "to_y", to_y);
+				engPutVariable(m_eng, "from_x", from_x);
+				engPutVariable(m_eng, "from_y", from_y);
+				engPutVariable(m_eng, "to_x", to_x);
+				engPutVariable(m_eng, "to_y", to_y);
 
-				engEvalString(m_pEngine, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
+				engEvalString(m_eng, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
 
 				while (prim_root->child){
 
@@ -165,29 +172,36 @@ int main()
 					*p_from_y = (double)prim_root->parent->coord[1];
 					*p_to_x = (double)prim_root->coord[0];
 					*p_to_y = (double)prim_root->coord[1];
+					*p_curr_x = (double)root->coord[0];
+					*p_curr_y = (double)root->coord[1];
 
-					engPutVariable(m_pEngine, "from_x", from_x);
-					engPutVariable(m_pEngine, "from_y", from_y);
-					engPutVariable(m_pEngine, "to_x", to_x);
-					engPutVariable(m_pEngine, "to_y", to_y);
+					engPutVariable(m_eng, "from_x", from_x);
+					engPutVariable(m_eng, "from_y", from_y);
+					engPutVariable(m_eng, "to_x", to_x);
+					engPutVariable(m_eng, "to_y", to_y);
+					engPutVariable(m_eng, "curr_x", curr_x);
+					engPutVariable(m_eng, "curr_y", curr_y);
 
-					engEvalString(m_pEngine, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
+					engEvalString(m_eng, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
+					engEvalString(m_eng, "plot(curr_x, curr_y, 'r.', 'MarkerSize', 12); hold on;");
 				}
 			}
-
+			*/
 			iter++;
 		}
-
-		printf("Number of iterations: %d    Size of tree: %d\n", iter, tree_size(root));
-		nearest_list = nearest(root, goal_node);
-		printf("Distance to goal node: %.5f\n", nearest_list[0].nearness);
+		done = update_tree(&root, goal);
+		//printf("Root time: %.2f\n", root->time);
+		//printf("Iterations: %d\n", iter);
+		//printf("Size of tree: %d\n", tree_size(root));
 	}
+	for (int i = 0; i < comm_vec.size(); i++)
+		printf("comm_vec[%d]->time: %.2f\n", i, comm_vec[i]->time);
 }
 
 // Allocate dynamic memory and initialize new node
 node* new_node(float coord_x, float coord_y, float coord_z, float hdg, int tr_deg, int zr, int type, float time, float cost, node* parent)
 {
-	node* new_node = (node*) malloc(sizeof(node));
+	node* new_node = (node*)malloc(sizeof(node));
 
 	if (new_node) {
 		new_node->coord[0] = coord_x;
@@ -208,7 +222,7 @@ node* new_node(float coord_x, float coord_y, float coord_z, float hdg, int tr_de
 }
 
 // Generate random node (revisit because this will create garbage)
-node* rand_node_coord(node* rand_node, node* goal_node, int iter)
+void rand_node_coord(node* rand_node, node* goal_node, int iter)
 {
 	int bias_freq = 100;
 
@@ -223,8 +237,6 @@ node* rand_node_coord(node* rand_node, node* goal_node, int iter)
 		rand_node->coord[1] = ((float)rand() / (float)(RAND_MAX)) * y_max;
 		rand_node->coord[2] = ((float)rand() / (float)(RAND_MAX)) * z_max;
 	}
-
-	return rand_node;
 }
 
 // Add node to tree
@@ -276,7 +288,7 @@ void trim_end_states(node* current, node* from, int tr_deg, int zr, float dt)
 // Extend tree
 node* extend_tree(node* root, node* rand_node)
 {
-	list* nearest_list = nearest(root, rand_node);
+	list* nearest_list = near(root, rand_node);
 	node* prim_root;
 	for (int i = 0; i <= 4; i++){
 		prim_root = steer_an(nearest_list[i].node, rand_node);
@@ -285,39 +297,45 @@ node* extend_tree(node* root, node* rand_node)
 			break;
 		}
 		else {
-			free_tree(prim_root);
+		    free_tree(&prim_root);
 			prim_root = NULL;
 		}
 	}
+	
+	free(nearest_list);
 	return prim_root;
 }
 
 node* steer_an(node* from, node* towards)
 {
+	int tr_deg;
+	int zr;
+	node* temp;
+
 	// Root of primtive is time-delayed node
 	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, from->time + t_td, 0.0f, from);
 	trim_end_states(td, from, from->tr_deg, from->zr, t_td);
 	disp d = disp_info(from, td);
 	td->cost = d.cost;
 
-	float dt;
-	int tr_deg;
-	int zr;
-	float dt_i = ts;
-
 	// Find best trim primitive and time spent along it
 	float r_G = sqrtf(powf(towards->coord[0] - td->coord[0], 2) + powf(towards->coord[1] - td->coord[1], 2) + powf(towards->coord[2] - td->coord[2], 2));
 	float theta_G = atan2(towards->coord[1] - td->coord[1], towards->coord[0] - td->coord[0]) - td->hdg;
+
 	if (theta_G > PI) theta_G = -2 * PI + theta_G;
 	else if (theta_G < -PI) theta_G = 2 * PI + theta_G;
+
 	float r_c = sqrtf(powf(towards->coord[0] - td->coord[0], 2) + powf(towards->coord[1] - td->coord[1], 2)) / (2 * sin(theta_G));
 	float L;
+
 	if (theta_G != 0) L = r_G*theta_G / sin(theta_G); 
 	else L = r_G;
-	dt = L / V;
+
+	float dt = L / V;
+	if (dt > dt_max) dt = dt_max;
+
 	tr_deg = int(V / r_c * 180.0f / PI);
 	tr_deg = ((tr_deg + 10 / 2) / 10) * 10;
-	if (dt > dt_max) dt = dt_max;
 	zr = int((towards->coord[2] - td->coord[2]) / dt);
 
 	if (tr_deg > max_tr_deg) tr_deg = max_tr_deg;
@@ -325,16 +343,14 @@ node* steer_an(node* from, node* towards)
 	if (zr > max_zr) zr = max_zr;
 	else if (zr < -max_zr) zr = -max_zr;
 
-
 	td->tr_deg = tr_deg;
 	td->zr = zr;
 
 	node* last = td;
-	dt_i = ts;
+	float dt_i = ts;
 	if (ts > dt) dt_i = dt;
 
 	// Add intermediate nodes along trim primitive to tree
-	node* temp;
 	do{
 		temp = new_node(0.0f, 0.0f, 0.0f, 0.0f, tr_deg, zr, 0, td->time + dt_i, 0.0f, last);
 		trim_end_states(temp, td, tr_deg, zr, dt_i);
@@ -348,12 +364,95 @@ node* steer_an(node* from, node* towards)
 	return td;
 }
 
+node* steer_agile(node* from, int m_type)
+{
+	float dx_man[14], dy_man[14], dz_man[14], t_man[14];
+
+	float dx_ATA[14] = { 1.3831, 2.4070, 3.2652, 4.1171, 4.7425, 4.9805, 5.0326, 4.8323, 4.2057, 3.4872, 2.6745, 1.5137, 0.4182, 0 };
+	float dy_ATA[14] = { 0.0041, 0.0370, 0.1092, 0.2218, 0.3066, 0.3109, 0.2524, 0.1077, -0.0235, -0.0477, -0.0339, -0.0077, -0.0002, 0 };
+	float dz_ATA[14] = { 0.0012, 0.0373, 0.1580, 0.4257, 0.7802, 1.0111, 1.1569, 1.1725, 0.8915, 0.5674, 0.2876, 0.0526, -0.0014, 0 };
+	float t_ATA[14] = { 0.1971, 0.3439, 0.4784, 0.6487, 0.8458, 0.9926, 1.1271, 1.2974, 1.4945, 1.6413, 1.7758, 1.9461, 2.1024, 2.1623 };
+
+	float dx_C2H[14] = { 0.2538, 1.1928, 2.2255, 2.8981, 3.4204, 3.9541, 4.4108, 4.6521, 4.8088, 4.9322, 4.9922, 5.0000, 4.9961, 4.9930 };
+	float dy_C2H[14] = { 0 };
+	float dz_C2H[14] = { -0.0002, 0.0007, 0.0677, 0.1874, 0.3305, 0.5262, 0.7360, 0.8648, 0.9564, 1.0360, 1.0851, 1.1011, 1.1070, 1.1084 };
+	float t_C2H[14] = { 0.0362, 0.1707, 0.3263, 0.4422, 0.5483, 0.6828, 0.8384, 0.9543, 1.0604, 1.1949, 1.3505, 1.4664, 1.5725, 1.7070 };
+
+	if (m_type == 2){
+		for (int i = 0; i < 14; i++){
+			dx_man[i] = dx_ATA[i];
+			dy_man[i] = dy_ATA[i];
+			dz_man[i] = dz_ATA[i];
+			t_man[i] = t_ATA[i];
+		}
+	}
+	else if (m_type == 3){
+		for (int i = 0; i < 14; i++){
+			dx_man[i] = dx_C2H[i];
+			dy_man[i] = dy_C2H[i];
+			dz_man[i] = dz_C2H[i];
+			t_man[i] = t_C2H[i];
+		}
+	}
+
+	// NEED TO DO ROTATION HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	// Root of primtive is time-delayed node
+	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, from->time + t_td, 0.0f, from);
+	trim_end_states(td, from, from->tr_deg, from->zr, t_td);
+	disp d = disp_info(from, td);
+	td->cost = d.cost;
+
+	// End node
+	node* end = new_node(td->coord[0] + dx_man[14], td->coord[1] + dy_man[14], td->coord[2] + dz_man[14], 0.0f, 0, 0, m_type, td->time + t_man[14], 0.0f, td);
+	end->cost = disp_info(td, end).cost;
+	end->hdg = td->hdg + PI;
+	end->hdg = fmod(end->hdg, 2 * PI);
+	if (end->hdg > PI) end->hdg = -2 * PI + end->hdg;
+	else if (end->hdg < -PI) end->hdg = 2 * PI + end->hdg;
+
+	add_child(td, end);
+
+	return td;
+}
+
+bool update_tree(node** root, node* goal)
+{ 
+	bool done = false;
+
+	// Find node nearest goal
+	list* nearest_list = near(*root, goal);
+	node* nearest_goal = nearest_list[0].node;
+	free(nearest_list);
+
+	// Find node at time interval on way to nearest_goal
+	std::deque<node*> r2e_list = root_to_end(nearest_goal);
+	node* comm_end = *root;
+	while ((comm_end->time - (*root)->time) < t_int){
+		r2e_list.pop_front();
+		if (r2e_list.empty()){
+			done = true;
+			break;
+		}
+		comm_end = r2e_list[0];	
+		add_to_commit(comm_end);
+	}
+
+	// Prune tree
+	prune_tree(root, comm_end);
+	*root = comm_end;
+	(*root)->parent = NULL;
+
+	return done;
+}
+
 disp disp_info(node* from, node* to)
 {
 	float L;
 
 	float r = sqrtf(powf(to->coord[0] - from->coord[0], 2) + powf(to->coord[1] - from->coord[1], 2) + powf(to->coord[2] - from->coord[2], 2));
 	float theta = atan2f(to->coord[1] - from->coord[1], to->coord[0] - from->coord[0]) - from->hdg;
+
 	if (theta > PI) theta = -2 * PI + theta;
 	else if (theta < -PI) theta = 2 * PI + theta;
 
@@ -384,37 +483,39 @@ bool collision(node* root)
 	return collision;
 }
 
-void free_tree(node* n)
+void free_tree(node** n)
 {
-	if (n == NULL)
+	if (*n == NULL)
 		return;
 
-	free_tree(n->child);
-	free_tree(n->next);
+	free_tree(&((*n)->child));
+	free_tree(&((*n)->next));
 
-	free(n);
+	free(*n);
+	*n = NULL;
 }
 
-list* nearest(node* root, node* to)
+void prune_tree(node** n, node* new_root)
+{
+	if (*n == NULL || *n == new_root)
+		return;
+
+	prune_tree(&((*n)->child), new_root);
+	prune_tree(&((*n)->next), new_root);
+
+	free(*n);
+	*n = NULL;
+}
+
+list* near(node* root, node* to)
 {
 	list *list_arr = NULL;
 	int sot = tree_size(root);
 	list_arr = (list*)calloc(sot, sizeof(list));
 	add_to_array(root, to, list_arr, 0);
 	qsort(list_arr, sot, sizeof(list), compare);
+	
 	return list_arr;
-
-	/*
-	for (int i = 0; i<sot; i++)
-	{
-		printf("arr[%d]: %p, %f\n", i, arr[i].node, arr[i].nearness);
-	}
-	qsort(arr, sot, sizeof(list), compare);
-	for (int i = 0; i<sot; i++)
-	{
-		printf("arr[%d]: %p, %f\n", i, arr[i].node, arr[i].nearness);
-	}
-	*/
 }
 
 int compare(const void* v1, const void* v2)
@@ -451,6 +552,27 @@ int add_to_array(node* n, node* to, list* arr, int i)
 	return i;
 }
 
+std::deque<node*> root_to_end(node* end)
+{
+	node* temp = end;
+	std::deque<node*> r2e_list(1, temp);
+	while (temp->parent != NULL){
+		temp = temp->parent;
+		r2e_list.push_front(temp);
+	}
+
+	return r2e_list;
+}
+
+void add_to_commit(node* n)
+{
+	node* new_n = (node*)malloc(sizeof(node));
+	memcpy(new_n, n, sizeof(node));
+	printf("new_n->time = %.2f\n", new_n->time);
+	comm_vec.push_back(new_n);
+}
+
+/*
 node* steer(node* from, node* towards)
 {
 	// Root of primtive is time-delayed node
@@ -516,7 +638,7 @@ node* steer(node* from, node* towards)
 
 	return td;
 }
-
+*/
 
 /*
 vector<float> generateRange(float a, float b, float c) {
@@ -574,11 +696,12 @@ node* compare_tree(node* n)
 */
 
 /*
-void backwards(node* n)
+node* extend_commited_tree(node* root)
 {
-	if (n == NULL)  return;
+	node* commited_node;
+	if (root == NULL)  return;
 
-	node* temp = n;
+	node* temp = root;
 	printf("backwards->ID: %d\n", temp->ID);
 	while (temp->parent != NULL)
 	{
