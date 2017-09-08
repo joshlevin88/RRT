@@ -37,7 +37,10 @@ typedef struct disp{
 typedef struct list{
 	struct node* node;
 	float nearness;
+	float smart_nearness;
 } list;
+
+typedef float(*ptr_to_DCM)[3][3];
 
 // Constants
 const float V = 5.0f;
@@ -54,6 +57,8 @@ const int near_max = 5;
 const float x_max = 50.0f;
 const float y_max = 30.0f;
 const float z_max = 10.0f;
+const float sd = 20.0f;
+const float start_coord[3] = { 1.0f, 1.0f, 1.0f };
 std::vector<node*> comm_vec;
 
 // Functions
@@ -68,14 +73,16 @@ node* steer_agile(node*, int);
 disp disp_info(node*, node*);
 bool collision(node*);
 void free_tree(node**);
-list* near(node*, node*);
+list* near(node*, node*, int);
 int compare(const void*, const void*);
+int smart_compare(const void*, const void*);
 int tree_size(node*);
 int add_to_array(node*, node*, list*, int);
 void prune_tree(node**, node*);
 bool update_tree(node**, node*);
 std::deque<node*> root_to_end(node*);
 void add_to_commit(node*);
+ptr_to_DCM create_DCM(float, float, float);
 
 /*
 node* steer(node*, node*);
@@ -90,7 +97,7 @@ void backwards(node*);
 int main()
 {
 	// For plotting in MATLAB
-	/*	
+	
 	Engine *m_eng;
 	m_eng = engOpen("null");
 	mxArray* from_x = mxCreateDoubleMatrix(1, 1, mxREAL);
@@ -105,16 +112,26 @@ int main()
 	double* p_to_y = mxGetPr(to_y);
 	double* p_curr_x = mxGetPr(curr_x);
 	double* p_curr_y = mxGetPr(curr_y);
-	*/
+	
 	node* prim_root;
 	
 
 	// Initialize tree with two nodes
-	node* root = new_node(1.0f, 15.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
+	node* root = new_node(start_coord[0], start_coord[1], start_coord[2], PI/4, 0, 0, 0, 0.0f, 0.0f, NULL);
 	node* second = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 1.0f, 0.0f, NULL);
 	trim_end_states(second, root, 0, 0, 1.0f);
 	add_child(root, second);
 	add_to_commit(root);
+
+	*p_from_x = (double)second->parent->coord[0];
+	*p_from_y = (double)second->parent->coord[1];
+	*p_to_x = (double)second->coord[0];
+	*p_to_y = (double)second->coord[1];
+	engPutVariable(m_eng, "from_x", from_x);
+	engPutVariable(m_eng, "from_y", from_y);
+	engPutVariable(m_eng, "to_x", to_x);
+	engPutVariable(m_eng, "to_y", to_y);
+	engEvalString(m_eng, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
 
 	//bool path_found = false;
 	bool done = false;
@@ -137,7 +154,7 @@ int main()
 			// Keep track of real-time computation interval
 			end = time(NULL);
 			elapsed = difftime(end, start);
-			if (elapsed >= t_int){
+			if (elapsed >= t_int*sd){
 				done_iter = true;
 				break;
 			}
@@ -149,19 +166,17 @@ int main()
 			prim_root = extend_tree(root, rand);
 
 			// Plot in MATLAB
-			/*
+			
 			if (prim_root != NULL){
 
 				*p_from_x = (double)prim_root->parent->coord[0];
 				*p_from_y = (double)prim_root->parent->coord[1];
 				*p_to_x = (double)prim_root->coord[0];
 				*p_to_y = (double)prim_root->coord[1];
-
 				engPutVariable(m_eng, "from_x", from_x);
 				engPutVariable(m_eng, "from_y", from_y);
 				engPutVariable(m_eng, "to_x", to_x);
 				engPutVariable(m_eng, "to_y", to_y);
-
 				engEvalString(m_eng, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
 
 				while (prim_root->child){
@@ -174,25 +189,23 @@ int main()
 					*p_to_y = (double)prim_root->coord[1];
 					*p_curr_x = (double)root->coord[0];
 					*p_curr_y = (double)root->coord[1];
-
 					engPutVariable(m_eng, "from_x", from_x);
 					engPutVariable(m_eng, "from_y", from_y);
 					engPutVariable(m_eng, "to_x", to_x);
 					engPutVariable(m_eng, "to_y", to_y);
 					engPutVariable(m_eng, "curr_x", curr_x);
 					engPutVariable(m_eng, "curr_y", curr_y);
-
 					engEvalString(m_eng, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 30]); hold on;");
 					engEvalString(m_eng, "plot(curr_x, curr_y, 'r.', 'MarkerSize', 12); hold on;");
 				}
 			}
-			*/
+			
 			iter++;
 		}
 		done = update_tree(&root, goal);
 		//printf("Root time: %.2f\n", root->time);
-		//printf("Iterations: %d\n", iter);
-		//printf("Size of tree: %d\n", tree_size(root));
+		printf("Iterations: %d\n", iter);
+		printf("Size of tree: %d\n", tree_size(root));
 	}
 	for (int i = 0; i < comm_vec.size(); i++)
 		printf("comm_vec[%d]->time: %.2f\n", i, comm_vec[i]->time);
@@ -288,10 +301,14 @@ void trim_end_states(node* current, node* from, int tr_deg, int zr, float dt)
 // Extend tree
 node* extend_tree(node* root, node* rand_node)
 {
-	list* nearest_list = near(root, rand_node);
+	list* nearest_list = near(root, rand_node, 0);
 	node* prim_root;
 	for (int i = 0; i <= 4; i++){
-		prim_root = steer_an(nearest_list[i].node, rand_node);
+
+		if (i == 0) prim_root = steer_an(nearest_list[i].node, rand_node);
+		else if (i == 1) prim_root = steer_agile(nearest_list[0].node, 2);
+		else if (i > 1) prim_root = steer_an(nearest_list[i-1].node, rand_node);
+
 		if (collision(prim_root) == false){
 			add_child(nearest_list[i].node, prim_root);
 			break;
@@ -368,15 +385,15 @@ node* steer_agile(node* from, int m_type)
 {
 	float dx_man[14], dy_man[14], dz_man[14], t_man[14];
 
-	float dx_ATA[14] = { 1.3831, 2.4070, 3.2652, 4.1171, 4.7425, 4.9805, 5.0326, 4.8323, 4.2057, 3.4872, 2.6745, 1.5137, 0.4182, 0 };
-	float dy_ATA[14] = { 0.0041, 0.0370, 0.1092, 0.2218, 0.3066, 0.3109, 0.2524, 0.1077, -0.0235, -0.0477, -0.0339, -0.0077, -0.0002, 0 };
-	float dz_ATA[14] = { 0.0012, 0.0373, 0.1580, 0.4257, 0.7802, 1.0111, 1.1569, 1.1725, 0.8915, 0.5674, 0.2876, 0.0526, -0.0014, 0 };
-	float t_ATA[14] = { 0.1971, 0.3439, 0.4784, 0.6487, 0.8458, 0.9926, 1.1271, 1.2974, 1.4945, 1.6413, 1.7758, 1.9461, 2.1024, 2.1623 };
+	float dx_ATA[14] = { 1.3831f, 2.4070f, 3.2652f, 4.1171f, 4.7425f, 4.9805f, 5.0326f, 4.8323f, 4.2057f, 3.4872f, 2.6745f, 1.5137f, 0.4182f, 0.0f };
+	float dy_ATA[14] = { 0.0041f, 0.0370f, 0.1092f, 0.2218f, 0.3066f, 0.3109f, 0.2524f, 0.1077f, -0.0235f, -0.0477f, -0.0339f, -0.0077f, -0.0002f, 0.0f };
+	float dz_ATA[14] = { 0.0012f, 0.0373f, 0.1580f, 0.4257f, 0.7802f, 1.0111f, 1.1569f, 1.1725f, 0.8915f, 0.5674f, 0.2876f, 0.0526f, -0.0014f, 0.0f };
+	float t_ATA[14] = { 0.1971f, 0.3439f, 0.4784f, 0.6487f, 0.8458f, 0.9926f, 1.1271f, 1.2974f, 1.4945f, 1.6413f, 1.7758f, 1.9461f, 2.1024f, 2.1623f };
 
-	float dx_C2H[14] = { 0.2538, 1.1928, 2.2255, 2.8981, 3.4204, 3.9541, 4.4108, 4.6521, 4.8088, 4.9322, 4.9922, 5.0000, 4.9961, 4.9930 };
-	float dy_C2H[14] = { 0 };
-	float dz_C2H[14] = { -0.0002, 0.0007, 0.0677, 0.1874, 0.3305, 0.5262, 0.7360, 0.8648, 0.9564, 1.0360, 1.0851, 1.1011, 1.1070, 1.1084 };
-	float t_C2H[14] = { 0.0362, 0.1707, 0.3263, 0.4422, 0.5483, 0.6828, 0.8384, 0.9543, 1.0604, 1.1949, 1.3505, 1.4664, 1.5725, 1.7070 };
+	float dx_C2H[14] = { 0.2538f, 1.1928f, 2.2255f, 2.8981f, 3.4204f, 3.9541f, 4.4108f, 4.6521f, 4.8088f, 4.9322f, 4.9922f, 5.0000f, 4.9961f, 4.9930f };
+	float dy_C2H[14] = { 0.0f };
+	float dz_C2H[14] = { -0.0002f, 0.0007f, 0.0677f, 0.1874f, 0.3305f, 0.5262f, 0.7360f, 0.8648f, 0.9564f, 1.0360f, 1.0851f, 1.1011f, 1.1070f, 1.1084f };
+	float t_C2H[14] = { 0.0362f, 0.1707f, 0.3263f, 0.4422f, 0.5483f, 0.6828f, 0.8384f, 0.9543f, 1.0604f, 1.1949f, 1.3505f, 1.4664f, 1.5725f, 1.7070f };
 
 	if (m_type == 2){
 		for (int i = 0; i < 14; i++){
@@ -395,7 +412,14 @@ node* steer_agile(node* from, int m_type)
 		}
 	}
 
-	// NEED TO DO ROTATION HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	// Rotate by heading at from node
+	ptr_to_DCM DCM = create_DCM(0.0f, 0.0f, from->hdg);
+	for (int i = 0; i < 14; i++){
+		dx_man[i] = (*DCM)[0][0] * dx_man[i] + (*DCM)[0][1] * dy_man[i] + (*DCM)[0][2] * dz_man[i];
+		dy_man[i] = (*DCM)[1][0] * dx_man[i] + (*DCM)[1][1] * dy_man[i] + (*DCM)[1][2] * dz_man[i];
+		dz_man[i] = (*DCM)[2][0] * dx_man[i] + (*DCM)[2][1] * dy_man[i] + (*DCM)[2][2] * dz_man[i];
+	}
+	free(DCM);
 
 	// Root of primtive is time-delayed node
 	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, from->time + t_td, 0.0f, from);
@@ -421,7 +445,7 @@ bool update_tree(node** root, node* goal)
 	bool done = false;
 
 	// Find node nearest goal
-	list* nearest_list = near(*root, goal);
+	list* nearest_list = near(*root, goal, 1);
 	node* nearest_goal = nearest_list[0].node;
 	free(nearest_list);
 
@@ -507,13 +531,14 @@ void prune_tree(node** n, node* new_root)
 	*n = NULL;
 }
 
-list* near(node* root, node* to)
+list* near(node* root, node* to, int near_type)
 {
 	list *list_arr = NULL;
 	int sot = tree_size(root);
 	list_arr = (list*)calloc(sot, sizeof(list));
 	add_to_array(root, to, list_arr, 0);
-	qsort(list_arr, sot, sizeof(list), compare);
+	if (near_type == 0) qsort(list_arr, sot, sizeof(list), compare);
+	else if (near_type == 1) qsort(list_arr, sot, sizeof(list), smart_compare);
 	
 	return list_arr;
 }
@@ -525,6 +550,18 @@ int compare(const void* v1, const void* v2)
 	if (p1->nearness < p2->nearness)
 		return -1;
 	else if (p1->nearness > p2->nearness)
+		return +1;
+	else
+		return 0;
+}
+
+int smart_compare(const void* v1, const void* v2)
+{
+	const list *p1 = (list*)v1;
+	const list *p2 = (list*)v2;
+	if (p1->smart_nearness > p2->smart_nearness)
+		return -1;
+	else if (p1->smart_nearness < p2->smart_nearness)
 		return +1;
 	else
 		return 0;
@@ -545,6 +582,13 @@ int add_to_array(node* n, node* to, list* arr, int i)
 
 	arr[i].node = n;
 	arr[i].nearness = disp_info(n, to).length;
+
+	float D = sqrtf(powf(n->coord[0] - start_coord[0], 2) + powf(n->coord[1] - start_coord[1], 2) + powf(n->coord[2] - start_coord[2], 2));
+	float L = n->cost;
+	float D2G = disp_info(n, to).length;
+
+	arr[i].smart_nearness = D / (L + D2G);
+
 	i++;
 	if (n->child != NULL) i = add_to_array(n->child, to, arr, i);
 	if (n->next != NULL) i = add_to_array(n->next, to, arr, i);
@@ -568,10 +612,27 @@ void add_to_commit(node* n)
 {
 	node* new_n = (node*)malloc(sizeof(node));
 	memcpy(new_n, n, sizeof(node));
-	printf("new_n->time = %.2f\n", new_n->time);
 	comm_vec.push_back(new_n);
 }
 
+ptr_to_DCM create_DCM(float phi, float the, float psi)
+{
+	ptr_to_DCM DCM = (ptr_to_DCM)malloc(sizeof(*DCM));
+
+	(*DCM)[0][0] = cos(the)*cos(psi);
+	(*DCM)[0][1] = cos(the)*sin(psi);
+	(*DCM)[0][2] = -sin(the);
+
+	(*DCM)[1][0] = -cos(phi)*sin(psi) + sin(phi)*sin(the)*cos(psi);
+	(*DCM)[1][1] = cos(phi)*cos(psi) + sin(phi)*sin(the)*sin(psi);
+	(*DCM)[1][2] = sin(phi)*cos(the);
+
+	(*DCM)[2][0] = sin(phi)*sin(psi) + cos(phi)*sin(the)*cos(psi);
+	(*DCM)[2][1] = -sin(phi)*cos(psi) + cos(phi)*sin(the)*sin(psi);
+	(*DCM)[2][2] = cos(phi)*cos(the);
+
+	return DCM;
+}
 /*
 node* steer(node* from, node* towards)
 {
