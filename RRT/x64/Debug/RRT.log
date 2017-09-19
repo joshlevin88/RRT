@@ -1,4 +1,4 @@
-﻿Build started 2017-09-15 12:15:45 AM.
+﻿Build started 2017-09-18 2:13:16 PM.
      1>Project "D:\Dropbox\PhD\Thesis\Motion Planning\RRT Motion Primitives\Time Delay Waypoints\C_Implementation\RRT\RRT.vcxproj" on node 2 (Build target(s)).
      1>ClCompile:
          C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\x86_amd64\CL.exe /c /I"C:\Program Files\MATLAB\R2016a\extern\include" /Zi /nologo /W3 /WX- /Od /D WIN32 /D _DEBUG /D _CONSOLE /D _LIB /D _UNICODE /D UNICODE /Gm /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Fo"x64\Debug\\" /Fd"x64\Debug\vc120.pdb" /Gd /TP /errorReport:prompt RRT.cpp
@@ -11,4 +11,4 @@
 
 Build succeeded.
 
-Time Elapsed 00:00:00.94
+Time Elapsed 00:00:02.23

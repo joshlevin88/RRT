@@ -1,10 +1,10 @@
 //#include "stdafx.h"
-//#include <iostream>
-//#include <stdlib.h>
-//#include <math.h>
+#include <iostream>
+#include <stdlib.h>
+#include <math.h>
 #include <Engine.h>
 #include <time.h>
-#include <deque>
+#include <stack>
 #include <vector>
 #include <algorithm>
 
@@ -56,16 +56,16 @@ typedef float(*ptr_to_DCM)[3][3];
 // Constants
 const float V = 5.0f; // Flight velocity
 const float bf = 2.0f; // Buffer around obstacles
-const int max_tr_deg = 60; // Max turning rate
+const int max_tr_deg = 80; // Max turning rate
 const int max_zr = 0; // Max climb rate
 const float coll_dist = 0.2f; // Gap between collision checks
-const float ATA_dist = 9.0f; // Distance required to do ATA
+const float ATA_dist = 7.0f; // Distance required to do ATA
 const float t_td = 0.23f; // Time-delay constant
 const float t_int = 0.5f; // Planning horizon interval
 const float ts = 0.5f; // Maximum time between nodes
-const float ts_max = 1.0f; // Maximum time for a primitive
-const int near_max = 5; // Maximum number of next near attempts
-const float sd = 20.0f; // Algorithm slow-down factor
+const float ts_max = 2.0f; // Maximum time for a primitive
+const int near_max = 6; // Maximum number of next near attempts
+const int bias_freq = 30; // Frequency of selecting goal as "random" node
 
 // Global variables
 std::vector<node*> comm_vec; // Vector of committed nodes
@@ -91,7 +91,7 @@ int tree_size(node*);
 void add_to_near_vec(node*, node*, std::vector<list>*);
 void prune_tree(node**, node*);
 bool update_tree(node**, node*);
-std::deque<node*> root_to_end(node*, node*);
+std::stack<node*> root_to_end(node*, node*);
 void add_to_commit(node*);
 ptr_to_DCM create_DCM(float, float, float);
 float norm(node*, node*);
@@ -99,14 +99,32 @@ void create_world(int);
 bool goal_reached(node*, node*, int);
 void plot_line(node*, node*);
 void plot_point(node*);
+//node* steer(node*, node*);
 
 int main()
 {
-	// Plot
-	bool plotting = true;
+	// Plotting
+	char c = NULL;
+	bool plotting;
+
+	printf("Would you like to plot? ");
+
+	do {
+		scanf_s("%c", &c, 1);
+	} while (c != 'y' && c != 'n');
+
+	if (c == 'y') plotting = true;
+	else plotting = false;
+
+	int sd = 1;
+	if (plotting) sd = sd*40; // Slow down algorithm if updating
 
 	// Create world
-	create_world(2);
+	int nw;
+
+	printf("Which world? ");
+	scanf_s("%i", &nw, 1);
+	create_world(nw);
 
 	// Initialize tree with two nodes
 	node* root = w.start;
@@ -125,6 +143,9 @@ int main()
 	goal->coord[1] = w.goals[gn][1];
 	goal->coord[2] = w.goals[gn][2];
 	node* rand = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
+	srand((int) time(NULL));
+	clock_t t1, t2;
+	float elapsed;
 
 	// If plotting
 	if (plotting) plot_line(second->parent, second);
@@ -132,16 +153,14 @@ int main()
 	while (!done){
 
 		// Start timer
-		time_t start, end;
-		float elapsed;
+		t1 = clock();
 		bool done_iter = false;
-		start = time(NULL);
 
 		while (!done_iter){
 
 			// Keep track of real-time computation interval
-			end = time(NULL);
-			elapsed = static_cast<float>(difftime(end, start));
+			t2 = clock();
+			elapsed = ((float)(t2 - t1) / 1000000.0f) * 1000; 
 			if (elapsed >= t_int*sd){
 				done_iter = true;
 				break;
@@ -161,7 +180,7 @@ int main()
 					goal->coord[0] = w.goals[gn][0];
 					goal->coord[1] = w.goals[gn][1];
 					goal->coord[2] = w.goals[gn][2];
-					printf("Intermediate goal reached! Next goal node: [%.1f, %.1f, %.1f]\n", goal->coord[0], goal->coord[1], goal->coord[2]);
+					printf("Intermediate goal reached!\n");
 				}
 				// If final goal, feasible path has been found
 				else if (!path_found){
@@ -196,6 +215,7 @@ int main()
 	// Add cruise-to-hover maneuver at end
 	node* C2H_end = steer_agile(comm_vec.back(), 3);
 	add_to_commit(C2H_end);
+	printf("C2H at [%.1f, %.1f, %.1f]\n", C2H_end->coord[0], C2H_end->coord[1], C2H_end->coord[2]);
 }
 
 // Allocate dynamic memory and initialize new node
@@ -224,8 +244,6 @@ node* new_node(float coord_x, float coord_y, float coord_z, float hdg, int tr_de
 // Generate random node (revisit because this will create garbage)
 void rand_node_coord(node* rand_node, node* goal_node, int iter)
 {
-	int bias_freq = 30;
-
 	// Every bias_freq iterations, return goal node
 	if (iter % bias_freq == 0) {
 		rand_node->coord[0] = goal_node->coord[0];
@@ -370,7 +388,7 @@ node* steer_an(node* from, node* towards)
 
 	// Add intermediate nodes along trim primitive to tree
 	node* last = td;
-	do{
+	while (dt < dt_max){
 		temp = new_node(0.0f, 0.0f, 0.0f, 0.0f, tr_deg, zr, 0, td->time + dt, 0.0f, last);
 		trim_end_states(temp, td, tr_deg, zr, dt);
 		temp->cost = last->cost + disp_info(last, temp).cost;
@@ -378,7 +396,14 @@ node* steer_an(node* from, node* towards)
 
 		last = temp;
 		dt += ts;
-	} while (dt <= dt_max);
+	}
+
+	// For dt = dt_max
+	temp = new_node(0.0f, 0.0f, 0.0f, 0.0f, tr_deg, zr, 0, td->time + dt_max, 0.0f, last);
+	trim_end_states(temp, td, tr_deg, zr, dt_max);
+	temp->cost = last->cost + disp_info(last, temp).cost;
+	add_child(last, temp);
+
 
 	return td; // Time-delayed node is root of primitive
 }
@@ -419,7 +444,7 @@ node* steer_agile(node* from, int m_type)
 	}
 
 	// Rotate to align with heading at from node
-	ptr_to_DCM DCM = create_DCM(0.0f, 0.0f, from->hdg);
+	ptr_to_DCM DCM = create_DCM(0.0f, 0.0f, -from->hdg);
 	for (int i = 0; i < 14; i++){
 		dx_man[i] = (*DCM)[0][0] * dx_man[i] + (*DCM)[0][1] * dy_man[i] + (*DCM)[0][2] * dz_man[i];
 		dy_man[i] = (*DCM)[1][0] * dx_man[i] + (*DCM)[1][1] * dy_man[i] + (*DCM)[1][2] * dz_man[i];
@@ -433,7 +458,7 @@ node* steer_agile(node* from, int m_type)
 	td->cost = from->cost + disp_info(from, td).cost;
 
 	// End node
-	node* end = new_node(td->coord[0] + dx_man[14], td->coord[1] + dy_man[14], td->coord[2] + dz_man[14], 0.0f, 0, 0, m_type, td->time + t_man[14], 0.0f, td);
+	node* end = new_node(td->coord[0] + dx_man[13], td->coord[1] + dy_man[13], td->coord[2] + dz_man[13], 0.0f, 0, 0, m_type, td->time + t_man[13], 0.0f, td);
 	end->cost = td->cost + 50.0f;
 	end->hdg = td->hdg + PI;
 
@@ -453,11 +478,11 @@ bool update_tree(node** root, node* goal)
 	bool done = false; // Has the aircraft reached the end of the trajectory
 
 	// Find node nearest goal via smart nearness criteria
-	std::vector<list> nearest_vec = near(*root, goal, 0);
+	std::vector<list> nearest_vec = near(*root, goal, 1);
 	node* end = nearest_vec[0].node;
-
+	                                         
 	// Get deque of nodes after current root to that nearest node
-	std::deque<node*> r2e_list = root_to_end(*root, end);
+	std::stack<node*> r2e_list = root_to_end(*root, end);
 
 	// Get node at or just past time interval on way to nearest node
 	node* comm_end = *root;
@@ -470,10 +495,11 @@ bool update_tree(node** root, node* goal)
 			return done = true;
 		}
 
-		comm_end = r2e_list.front();	
+		comm_end = r2e_list.top();	
 		add_to_commit(comm_end);
+		if (comm_end->type == 2) printf("ATA at [%.1f, %.1f, %.1f]\n", comm_end->coord[0], comm_end->coord[1], comm_end->coord[2]);
 
-		r2e_list.pop_front();
+		r2e_list.pop();
 	}
 
 	// Prune tree
@@ -498,7 +524,11 @@ disp disp_info(node* from, node* to)
 	if (theta != 0) L = r*theta / sin(theta);
 	else L = r;
 
-	disp d = {L, L};
+	float xy_norm = sqrtf(powf(to->coord[0] - from->coord[0], 2) + powf(to->coord[1] - from->coord[1], 2));
+	float r_c = xy_norm / 2 * sin(theta);
+	float fpa = atan2f(to->coord[2] - from->coord[2], xy_norm);
+		
+	disp d = {L, L}; // smoothness: 1/r_c + fabsf(fpa)
 
 	return d;
 }
@@ -512,7 +542,7 @@ bool collision(node* root)
 	node* temp = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 1.0f, 0.0f, NULL);
 	float dt, dt_end;
 
-	while (from->child){
+	while (from->child != NULL){
 
 		to = from->child;
 
@@ -525,10 +555,10 @@ bool collision(node* root)
 		dt = coll_dist / V; // Check for collision every coll_dist
 
 		if (to->type < 2) dt_end = (to->time - from->time); 
-		else dt_end = 5.0f / V; // Agile maneuvers take up 5 metres ahead of previous trajectory
+		else dt_end = ATA_dist / V; // Agile maneuvers take up 5 metres ahead of previous trajectory
 
 		// Check if path to node collides with obstacle
-		while (dt <= dt_end){
+		while (dt < dt_end){
 			trim_end_states(temp, from, to->tr_deg, to->zr, dt);
 			for (int i = 0; i < w.n_obs; i++){
 				if (temp->coord[0] >= (w.obs[i][0] - bf) &&
@@ -543,6 +573,21 @@ bool collision(node* root)
 			}
 			dt += coll_dist / V;
 		}
+
+		// Check end of path
+		trim_end_states(temp, from, to->tr_deg, to->zr, dt_end);
+		for (int i = 0; i < w.n_obs; i++){
+			if (temp->coord[0] >= (w.obs[i][0] - bf) &&
+				temp->coord[0] <= (w.obs[i][0] + w.obs[i][3] + bf) &&
+				temp->coord[1] >= (w.obs[i][1] - bf) &&
+				temp->coord[1] <= (w.obs[i][1] + w.obs[i][4] + bf) &&
+				temp->coord[2] >= (w.obs[i][2] - bf) &&
+				temp->coord[2] <= (w.obs[i][2] + w.obs[i][5] + bf)){
+				free(temp);
+				return collision = true;
+			}
+		}
+
 		from = to;
 	}
 
@@ -631,13 +676,13 @@ void add_to_near_vec(node* n, node* to, std::vector<list>* near_vec)
 
 	float D = sqrtf(powf(td->coord[0] - w.start->coord[0], 2) + powf(td->coord[1] - w.start->coord[1], 2) + powf(td->coord[2] - w.start->coord[2], 2));
 	float L = td->cost;
-	float D2G = disp_info(td, to).length;
+	float D2G = sqrtf(powf(to->coord[0] - td->coord[0], 2) + powf(to->coord[1] - td->coord[1], 2) + powf(to->coord[2] - td->coord[2], 2));
 
 	// Node address and nearness info
 	list l;
 	l.node = n;
 	l.nearness = disp_info(td, to).length;
-	l.smart_nearness = (L + 2*D2G) / D;
+	l.smart_nearness = (L + D2G) / D;
 	
 	(*near_vec).push_back(l); // Add to vector
 
@@ -650,14 +695,15 @@ void add_to_near_vec(node* n, node* to, std::vector<list>* near_vec)
 	return;
 }
 
-// Create deque of nodes starting right after root and going to end
-std::deque<node*> root_to_end(node* root, node* end)
+// Create stack of nodes starting right after root and going to end
+std::stack<node*> root_to_end(node* root, node* end)
 {
 	node* temp = end;
-	std::deque<node*> r2e_dq(1, temp); // Initialize deque with end node
+	std::stack<node*> r2e_dq; 
+	r2e_dq.push(temp); // Initialize deque with end node
 	while (temp->parent != root && temp->parent != NULL){
 		temp = temp->parent;
-		r2e_dq.push_front(temp); // Add to front of deque
+		r2e_dq.push(temp); // Add to front of deque
 	}
 
 	return r2e_dq;
@@ -704,13 +750,13 @@ void create_world(int n)
 	if (n == 0){
 
 		// Starting node
-		w.start = new_node(5.0f, 4.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
+		w.start = new_node(15.0f, 4.0f, 5.0f, PI, 0, 0, 0, 0.0f, 0.0f, NULL);
 
 		// Environment boundaries
 		w.x_max = 50.0f;
 		w.y_max = 25.0f;
 		w.z_max = 10.0f;
-
+		
 		// Obstacles
 		w.n_obs = 2;
 		float obs_arr[2][6] = { { 0.0f, 8.0f, 0.0f, 40.0f, 2.0f, 10.0f }, 
@@ -728,10 +774,16 @@ void create_world(int n)
 		}
 
 		// Goals (intermediate and final)
-		w.n_goals = 3;
-		float goal_arr[3][5] = { {45.0f, 8.5f, 5.0f, PI/2.0f, 1.5f},
-								 {5.0f, 16.5f, 5.0f, PI/2.0f, 1.5f},
-								 {50.0f, 21.0f, 5.0f, 0.0f, 1.5f} };
+		w.n_goals = 9;
+		float goal_arr[9][5] = { { 45.0f, 8.5f, 5.0f, PI/2.0f, 1.5f },
+								 { 30.0f, 13.0f, 5.0f, PI, 1.5f },
+								 { 20.0f, 13.0f, 5.0f, PI, 1.5f },
+								 { 10.0f, 13.0f, 5.0f, PI, 1.5f },
+								 { 5.0f, 16.5f, 5.0f, PI / 2.0f, 1.5f },
+								 { 10.0f, 21.0f, 5.0f, 0.0f, 1.5f },
+								 { 20.0f, 21.0f, 5.0f, 0.0f, 1.5f },
+								 { 30.0f, 21.0f, 5.0f, 0.0f, 1.5f },
+								 { 50.0f, 21.0f, 5.0f, 0.0f, 1.5f }};
 
 		w.goals = (float**)malloc(w.n_goals * sizeof(float**));
 		for (int i = 0; i < w.n_goals; i++){
@@ -785,7 +837,7 @@ void create_world(int n)
 	}
 
 	// Wall with passage
-	else {
+	else if (n == 2) {
 
 		w.start = new_node(1.0f, 1.0f, 5.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
 
@@ -810,7 +862,48 @@ void create_world(int n)
 
 		w.n_goals = 2;
 		float goal_arr[2][5] = { { 25.0f, 12.5f, 5.0f, 0.0f, 1.0f },
-							     { 48.0f, 23.0f, 5.0f, 0.0f, 1.0f } };
+							     { 49.0f, 24.0f, 5.0f, 0.0f, 1.0f } };
+
+		w.goals = (float**)malloc(w.n_goals * sizeof(float**));
+		for (int i = 0; i < w.n_goals; i++){
+			w.goals[i] = (float*)malloc(5 * sizeof(float*));
+		}
+
+		for (int i = 0; i < w.n_goals; i++){
+			for (int j = 0; j < 5; j++){
+				w.goals[i][j] = goal_arr[i][j];
+			}
+		}
+	}
+
+	// S walls
+	else {
+
+		w.start = new_node(1.0f, 1.0f, 5.0f, PI/4, 0, 0, 0, 0.0f, 0.0f, NULL);
+
+		w.x_max = 50.0f;
+		w.y_max = 25.0f;
+		w.z_max = 10.0f;
+
+		w.n_obs = 2;
+		float obs_arr[2][6] = { { 15.0f, 0.0f, 0.0f, 5.0f, 20.0f, 10.0f },
+								{ 30.0f, 5.0f, 0.0f, 5.0f, 20.0f, 10.0f } };
+
+		w.obs = (float**)malloc(w.n_obs * sizeof(float**));
+		for (int i = 0; i < w.n_obs; i++){
+			w.obs[i] = (float*)malloc(6 * sizeof(float*));
+		}
+
+		for (int i = 0; i < w.n_obs; i++){
+			for (int j = 0; j < 6; j++){
+				w.obs[i][j] = obs_arr[i][j];
+			}
+		}
+
+		w.n_goals = 3;
+		float goal_arr[3][5] = { { 17.5f, 22.5f, 5.0f, 0.0f, 2.5f },
+								 { 32.5f,  2.5f, 5.0f, 0.0f, 2.5f },
+								 { 48.0f, 23.0f, 5.0f, 0.0f, 1.0f } };
 
 		w.goals = (float**)malloc(w.n_goals * sizeof(float**));
 		for (int i = 0; i < w.n_goals; i++){
@@ -829,7 +922,10 @@ void create_world(int n)
 bool goal_reached(node* n, node* goal, int gn)
 {
 	if (n == NULL) return false;
-	if (norm(n, goal) <= w.goals[gn][4]) return true; // If in region
+	if (norm(n, goal) <= w.goals[gn][4]) { // If in region
+		n->cost = 0.0f;
+		return true;
+	}
 	if (goal_reached(n->next, goal, gn)) return true; // Recursively iterate
 	return goal_reached(n->child, goal, gn);
 }
@@ -859,7 +955,8 @@ void plot_line(node* from, node* to)
 	engPutVariable(m_eng, "to_x", to_x);
 	engPutVariable(m_eng, "to_y", to_y);
 
-	engEvalString(m_eng, "line([from_x to_x],[from_y to_y]), set(gca, 'XLim', [0 50], 'YLim', [0 25]); hold on;");
+	if (to->child != NULL && to->child->type == 2) engEvalString(m_eng, "line([from_x to_x],[from_y to_y], 'Color', 'r'); axis equal; set(gca, 'XLim', [0 50], 'YLim', [0 25]); hold on;");
+	else engEvalString(m_eng, "line([from_x to_x],[from_y to_y], 'Color', 'k'); axis equal; set(gca, 'XLim', [0 50], 'YLim', [0 25]); hold on;");
 }
 
 // Plot point in MATLAB
@@ -879,29 +976,27 @@ void plot_point(node* current)
 	engPutVariable(m_eng, "curr_x", curr_x);
 	engPutVariable(m_eng, "curr_y", curr_y);
 
-	engEvalString(m_eng, "plot(curr_x, curr_y, 'r.', 'MarkerSize', 12); hold on;");
+	engEvalString(m_eng, "plot(curr_x, curr_y, 'b.', 'MarkerSize', 14); axis equal; set(gca, 'XLim', [0 50], 'YLim', [0 25]); hold on;");
 }
 
 /*
 node* steer(node* from, node* towards)
 {
-	// Root of primtive is time-delayed node
+	int tr_deg, zr, j, k;
+	int i = 0;
+	float dt_end, norm_temp;
+	float min_norm = 1000;
+	float dt_i = ts;
+	node* temp;
+	node* prim_try = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL); // Temp node to try different primitives
+
+	// First node of primtive is time-delayed node
 	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, from->time + t_td, 0.0f, from);
 	trim_end_states(td, from, from->tr_deg, from->zr, t_td);
 	disp d = disp_info(from, td);
-	td->cost = d.cost;
+	td->cost = from->cost + d.cost;
 
-	node* temp = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0.0f, 0.0f, NULL);
-	disp d2 = disp_info(td, towards);
-	float L = d.length + d2.length;
-	float dt;
-	int tr_deg;
-	int zr;
-	float min_norm = 1000;
-	float norm_temp;
-	int i = 0;
-	int j, k;
-	float dt_i = ts;
+	float L = disp_info(td, towards).length;
 
 	// Find best trim primitive and time spent along it
 	do{
@@ -912,42 +1007,45 @@ node* steer(node* from, node* towards)
 			k = 0;
 			for (int zr_i = -max_zr; zr_i <= max_zr; zr_i += 1){
 				k++;
-				trim_end_states(temp, from, tr_deg_i, zr_i, dt_i);
-				norm_temp = norm(temp, towards);
+				trim_end_states(prim_try, td, tr_deg_i, zr_i, dt_i);
+				norm_temp = norm(prim_try, towards);
 				if (norm_temp < min_norm){
 					min_norm = norm_temp;
 					tr_deg = tr_deg_i;
 					zr = zr_i;
-					dt = dt_i;
+					dt_end = dt_i;
 				}
 			}
 		}
 		dt_i += ts;
 	} while (dt_i <= L / V);
-
-	free(temp);
-	if (dt > ts_max) dt = ts_max;
+	free(prim_try);
 
 	td->tr_deg = tr_deg;
 	td->zr = zr;
 
-	node* last = td;
-	dt_i = ts;
-	if (ts > dt) dt_i = dt;
+	float dt_max = std::min(dt_end, ts_max); // Max time on primitive must not be greater than const ts_max
+    float dt = std::min(ts, dt_max); // Time step must not be greater than dt_max;
 
 	// Add intermediate nodes along trim primitive to tree
-	do{
-		temp = new_node(0.0f, 0.0f, 0.0f, 0.0f, tr_deg, zr, 0, td->time + dt_i, 0.0f, last);
-		trim_end_states(temp, td, tr_deg, zr, dt_i);
-		temp->cost = disp_info(last, temp).cost;
+	node* last = td;
+	while (dt < dt_max){
+		temp = new_node(0.0f, 0.0f, 0.0f, 0.0f, tr_deg, zr, 0, td->time + dt, 0.0f, last);
+		trim_end_states(temp, td, tr_deg, zr, dt);
+		temp->cost = last->cost + disp_info(last, temp).cost;
 		add_child(last, temp);
 
 		last = temp;
-		dt_i += ts;
-	} while (dt_i <= dt);
+		dt += ts;
+	}
 
-	return td;
+	// For dt = dt_max
+	temp = new_node(0.0f, 0.0f, 0.0f, 0.0f, tr_deg, zr, 0, td->time + dt_max, 0.0f, last);
+	trim_end_states(temp, td, tr_deg, zr, dt_max);
+	temp->cost = last->cost + disp_info(last, temp).cost;
+	add_child(last, temp);
+
+
+	return td; // Time-delayed node is root of primitive
 }
 */
-
-
