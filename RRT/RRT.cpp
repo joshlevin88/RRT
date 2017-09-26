@@ -49,6 +49,7 @@ typedef struct disp{
 // List for nearest sorting
 typedef struct list{
 	node* n;
+	float proximity;
 	float nearness;
 	float smart_nearness;
 } list;
@@ -74,9 +75,10 @@ const float ATA_dist = 7.0f; // Distance required to do ATA
 const float t_td = 0.23f; // Time-delay constant
 const float t_int = 0.5f; // Planning horizon interval
 const float ts = 0.5f; // Maximum time between nodes
-const float ts_max = 2.0f; // Maximum time for a primitive
-const int near_max = 6; // Maximum number of next near attempts
+const float ts_max = 1.0f; // Maximum time for a primitive
+const int near_max = 10; // Maximum number of next near attempts
 const int bias_freq = 30; // Frequency of selecting goal as "random" node
+const int max_tree_size = 300; // Max tree size to keep memory usage low
 
 // Global variables
 std::vector<cnode> comm_vec; // Vector of committed nod
@@ -97,8 +99,9 @@ disp disp_info(node*, node*);
 bool collision(node*);
 void free_tree(node**);
 std::vector<list> near(node*, node*, int);
-bool compare(const list &, const list &);
-bool smart_compare(const list &, const list &);
+bool comp_prox(const list &, const list &);
+bool comp_near(const list &, const list &);
+bool comp_snear(const list &, const list &);
 int tree_size(node*);
 void add_to_near_vec(node*, node*, std::vector<list>*);
 void prune_tree(node**, node*);
@@ -129,7 +132,7 @@ int main()
 	else plotting = false;
 
 	int sd = 1;
-	if (plotting) sd = sd * 40; // Slow down algorithm if updating
+	if (plotting) sd = sd * 5; // Slow down algorithm if updating
 
 	// Create world
 	int nw;
@@ -164,7 +167,7 @@ int main()
 	// If plotting
 	if (plotting) plot_line(second->parent, second);
 
-	while (!path_found){
+	while (!done){
 
 		// Start timer
 		t1 = clock();
@@ -180,36 +183,39 @@ int main()
 				break;
 			}
 
-			// Generate a random node (change coordinates of random node)
-			rand_node_coord(rand, goal, iter);
+			if (tree_size(root) < max_tree_size){
 
-			// Extend tree
-			prim_root = extend_tree(root, rand, goal, gn);
+				// Generate a random node (change coordinates of random node)
+				rand_node_coord(rand, goal, iter);
 
-			// Check if current goal has been reached
-			if (goal_reached(prim_root, goal, gn)){
-				// If intermediate goal, update goal node
-				if (gn < (w.n_goals - 1)){
-					gn++;
-					goal->coord[0] = w.goals[gn][0];
-					goal->coord[1] = w.goals[gn][1];
-					goal->coord[2] = w.goals[gn][2];
-					printf("Intermediate goal reached!\n");
+				// Extend tree
+				prim_root = extend_tree(root, rand, goal, gn);
+
+				// Check if current goal has been reached
+				if (goal_reached(prim_root, goal, gn)){
+					// If intermediate goal, update goal node
+					if (gn < (w.n_goals - 1)){
+						gn++;
+						goal->coord[0] = w.goals[gn][0];
+						goal->coord[1] = w.goals[gn][1];
+						goal->coord[2] = w.goals[gn][2];
+						printf("Intermediate goal reached!\n");
+					}
+					// If final goal, feasible path has been found
+					else if (!path_found){
+						path_found = true;
+						printf("Feasible path found!\n");
+					}
 				}
-				// If final goal, feasible path has been found
-				else if (!path_found){
-					path_found = true;
-					printf("Feasible path found!\n");
-				}
-			}
 
-			// Plot in MATLAB
-			if (plotting){
-				if (prim_root != NULL){
-					plot_line(prim_root->parent, prim_root);
-					while (prim_root->child){
-						prim_root = prim_root->child;
+				// Plot in MATLAB
+				if (plotting){
+					if (prim_root != NULL){
 						plot_line(prim_root->parent, prim_root);
+						while (prim_root->child){
+							prim_root = prim_root->child;
+							plot_line(prim_root->parent, prim_root);
+						}
 					}
 				}
 			}
@@ -226,6 +232,8 @@ int main()
 		if (plotting) plot_point(root);
 	}
 
+	if (comm_vec.back().type == 3) printf("Last prim was C2H :)\n");
+	else printf("Last prim was not C2H :(\n");
 	/*
 	// Add cruise-to-hover maneuver at end
 	node* C2H_end = steer_agile(comm_vec.back(), 3);
@@ -293,9 +301,9 @@ void rand_node_coord(node* rand_node, node* goal_node, int iter)
 		rand_node->coord[2] = goal_node->coord[2];
 	}
 	else{
-		rand_node->coord[0] = ((float)rand() / (float)(RAND_MAX)) * w.x_max;
-		rand_node->coord[1] = ((float)rand() / (float)(RAND_MAX)) * w.y_max;
-		rand_node->coord[2] = ((float)rand() / (float)(RAND_MAX)) * w.z_max;
+		rand_node->coord[0] = static_cast <float> (rand() % 30000) / 30000.0f * w.x_max;
+		rand_node->coord[1] = static_cast <float> (rand() % 30000) / 30000.0f * w.y_max;
+		rand_node->coord[2] = static_cast <float> (rand() % 30000) / 30000.0f * w.z_max;
 	}
 }
 
@@ -346,40 +354,72 @@ void trim_end_states(node* current, node* from, int tr_deg, int zr, float dt)
 	current->hdg = fmod(current->hdg, 2 * PI);
 	if (current->hdg > PI) current->hdg = -2 * PI + current->hdg;
 	else if (current->hdg < -PI) current->hdg = 2 * PI + current->hdg;
-}
+}\
 
 // Extend tree
 node* extend_tree(node* root, node* rand_node, node* goal, int gn)
 {
 	std::vector<list> near_vec;
-	node* prim_root;
+	node* prim_root = NULL;
+	node* prim_end = NULL;
 
 	// Nearness criteria depends on whether feasible path has been found
 	int n;
 	if (!path_found) n = 0;
-	else n = 1;
+	else n = 0;
 
 	// Get vector of nodes orderered by nearness
 	near_vec = near(root, rand_node, n);
 
-	// Try steering from nodes in order
-	for (int i = 0, n = static_cast<int>(near_vec.size()); i < std::min(5, n); i++){
+	int i = 0;
+	int m = static_cast<int>(near_vec.size());
 
-		if (i == 0) prim_root = steer_an(near_vec[0].n, rand_node);
-		else if (i == 1) prim_root = steer_agile(near_vec[0].n, 2); // Make second attempt ATA
-		else prim_root = steer_an(near_vec[i - 1].n, rand_node); // Then keep trying trim primitives
+	// Look for a desirable primitive over a maximum number of nearest nodes
+	while (i < std::min(near_max, m)){
 
-		// Check for collision
-		if (!collision(prim_root)){
-			if (i == 0) add_child(near_vec[0].n, prim_root);
-			else add_child(near_vec[i - 1].n, prim_root);
-			break;
+		// Do not extend tree from a hover
+		if (near_vec[i].n->type == 3){
+			i++;
+			continue;
 		}
 
-		// Deallocate memory if primitive causes collision
-		else {
-			free_tree(&prim_root);
+		// If the nearest node is within range of the final goal, only try C2H maneuver
+		float D2G = sqrtf(powf(w.goals[w.n_goals - 1][0] - near_vec[i].n->coord[0], 2) + powf(w.goals[w.n_goals - 1][1] - near_vec[i].n->coord[1], 2) + powf(w.goals[w.n_goals - 1][2] - near_vec[i].n->coord[2], 2));
+		if (D2G <= (6.15f + w.goals[w.n_goals - 1][4])){
+			prim_root = steer_agile(near_vec[i].n, 3);
+			// Add C2H maneuver if there is no collision and it ends in goal region
+			D2G = sqrtf(powf(w.goals[w.n_goals - 1][0] - prim_root->child->coord[0], 2) + powf(w.goals[w.n_goals - 1][1] - prim_root->child->coord[1], 2) + powf(w.goals[w.n_goals - 1][2] - prim_root->child->coord[2], 2));
+			if (!collision(prim_root) && D2G <= w.goals[gn][4]){
+				add_child(near_vec[i].n, prim_root);
+				break;
+			}
+			else free_tree(&prim_root);
 		}
+		// Else, try normal primitive
+		else{
+			prim_root = steer_an(near_vec[i].n, rand_node);
+			// If there is a collision on the first try, attempt ATA
+			if (collision(prim_root) && i == 0){
+				free_tree(&prim_root);
+				prim_root = steer_agile(near_vec[i].n, 2);
+			}
+
+			prim_end = prim_root;
+			while (prim_end->child != NULL){
+				prim_end = prim_end->child;
+			}
+
+			//If no collision, extend tree with primitive (unless it ends too close to goal region)
+			D2G = sqrtf(powf(w.goals[w.n_goals - 1][0] - prim_end->coord[0], 2) + powf(w.goals[w.n_goals - 1][1] - prim_end->coord[1], 2) + powf(w.goals[w.n_goals - 1][2] - prim_end->coord[2], 2));
+
+			if (!collision(prim_root) && D2G > (6.15f - w.goals[w.n_goals - 1][4])){
+				add_child(near_vec[i].n, prim_root);
+				break;
+			}
+			else free_tree(&prim_root);
+		}
+
+		i++;
 	}
 
 	return prim_root;
@@ -520,7 +560,10 @@ bool update_tree(node** root, node* goal)
 	bool done = false; // Has the aircraft reached the end of the trajectory
 
 	// Find node nearest goal via smart nearness criteria
-	std::vector<list> nearest_vec = near(*root, goal, 1);
+	int n;
+	if (!path_found) n = 0;
+	else n = 1;
+	std::vector<list> nearest_vec = near(*root, goal, n);
 	node* end = nearest_vec[0].n;
 
 	// Get deque of nodes after current root to that nearest node
@@ -530,18 +573,42 @@ bool update_tree(node** root, node* goal)
 	node* comm_end = *root;
 	while ((comm_end->t - (*root)->t) < t_int){
 
-		// If no more nodes to move towards, algorithm is done
-		if (r2e_list.empty()){
-			//if (!path_found) printf("Caught up to trajectory end before reaching goal :(\n");
-			//else printf("Goal node reached :)\n");
+		// Check if goal node has been reached
+		float D2G = sqrtf(powf(w.goals[w.n_goals - 1][0] - comm_end->coord[0], 2) + powf(w.goals[w.n_goals - 1][1] - comm_end->coord[1], 2) + powf(w.goals[w.n_goals - 1][2] - comm_end->coord[2], 2));
+		if (D2G <= w.goals[w.n_goals - 1][4]){
+			printf("Goal node reached :)\n");
 			return done = true;
 		}
 
-		comm_end = r2e_list.top();
-		add_to_commit(comm_end);
-		//if (comm_end->type == 2) printf("ATA at [%.1f, %.1f, %.1f]\n", comm_end->coord[0], comm_end->coord[1], comm_end->coord[2]);
+		// If the current optimal node is reached, continue along children
+		if (r2e_list.empty()){
+			if (comm_end->child != NULL){
+				comm_end = comm_end->child;
+			}
 
-		r2e_list.pop();
+			// If no children, algorithm has failed
+			else{
+				printf("Caught up to trajectory end :(\n");
+
+				// End with C2H
+				node* C2H_root = steer_agile(comm_end, 3);
+				add_to_commit(C2H_root);
+				add_to_commit(C2H_root->child);
+				free_tree(&C2H_root);
+
+				return done = true;
+			}
+		}
+		else{
+			comm_end = r2e_list.top();
+			r2e_list.pop();
+		}
+
+		add_to_commit(comm_end);
+
+		if (comm_end->type == 2) printf("ATA at [%.1f, %.1f, %.1f]\n", comm_end->coord[0], comm_end->coord[1], comm_end->coord[2]);
+
+
 	}
 
 	// Prune tree
@@ -681,20 +748,27 @@ std::vector<list> near(node* root, node* to, int near_type)
 {
 	std::vector<list> near_vec; // Vector of nodes with nearness information
 	add_to_near_vec(root, to, &near_vec); // Add all nodes in tree, with nearness information, to vector
-	if (near_type == 0) std::sort(near_vec.begin(), near_vec.end(), compare); // Sort via Euclidian distance to to node
-	else std::sort(near_vec.begin(), near_vec.end(), smart_compare); // Sort via smarter nearness criteria
+	if (near_type == 0) std::sort(near_vec.begin(), near_vec.end(), comp_near); // Sort via nearness criteria
+	else if (near_type == 1) std::sort(near_vec.begin(), near_vec.end(), comp_prox); // Sort via proximity
+	else std::sort(near_vec.begin(), near_vec.end(), comp_snear); // Sort via smart nearness criteria
 
 	return near_vec;
 }
 
 // Euclidean distance comparison
-bool compare(const list &a, const list &b)
+bool comp_prox(const list &a, const list &b)
+{
+	return a.proximity < b.proximity;
+}
+
+// Nearness comparison
+bool comp_near(const list &a, const list &b)
 {
 	return a.nearness < b.nearness;
 }
 
-// Smarter nearness comparison
-bool smart_compare(const list &a, const list &b)
+// Smart nearness comparison
+bool comp_snear(const list &a, const list &b)
 {
 	return a.smart_nearness < b.smart_nearness;
 }
@@ -712,20 +786,21 @@ int tree_size(node* root)
 // Add nodes in tree, with nearness information, to vector
 void add_to_near_vec(node* n, node* to, std::vector<list>* near_vec)
 {
-	if (n == NULL) return;
-
+	if (n == NULL) return; // Do not try to extend tree from hover
+	
 	// Nearness info is based on distance from time-delayed node to to node
 	node* td = new_node(0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 1, n->t + t_td, 0.0f, NULL);
 	trim_end_states(td, n, n->tr_deg, n->zr, t_td);
 	td->cost = n->cost + disp_info(n, td).cost;
 
-	float D = sqrtf(powf(td->coord[0] - start_coord[0], 2) + powf(td->coord[1] - start_coord[1], 2) + powf(td->coord[2] - start_coord[2], 2));
-	float L = td->cost;
-	float D2G = sqrtf(powf(to->coord[0] - td->coord[0], 2) + powf(to->coord[1] - td->coord[1], 2) + powf(to->coord[2] - td->coord[2], 2));
+	float D = sqrtf(powf(n->coord[0] - start_coord[0], 2) + powf(n->coord[1] - start_coord[1], 2) + powf(n->coord[2] - start_coord[2], 2));
+	float L = n->cost;
+	float D2G = norm(n, to);
 
 	// Node address and nearness info
 	list l;
 	l.n = n;
+	l.proximity = D2G;
 	l.nearness = disp_info(td, to).length;
 	l.smart_nearness = (L + D2G) / D;
 
@@ -836,7 +911,7 @@ void create_world(int n)
 		{ 10.0f, 21.0f, 5.0f, 0.0f, 1.5f },
 		{ 20.0f, 21.0f, 5.0f, 0.0f, 1.5f },
 		{ 30.0f, 21.0f, 5.0f, 0.0f, 1.5f },
-		{ 50.0f, 21.0f, 5.0f, 0.0f, 1.5f } };
+		{ 50.0f, 21.0f, 5.0f, 0.0f, 2.0f } };
 
 		w.goals = (float**)malloc(w.n_goals * sizeof(float**));
 		for (int i = 0; i < w.n_goals; i++){
@@ -915,7 +990,7 @@ void create_world(int n)
 
 		w.n_goals = 2;
 		float goal_arr[2][5] = { { 25.0f, 12.5f, 5.0f, 0.0f, 1.0f },
-		{ 49.0f, 24.0f, 5.0f, 0.0f, 1.0f } };
+		{ 49.0f, 24.0f, 5.0f, 0.0f, 2.0f } };
 
 		w.goals = (float**)malloc(w.n_goals * sizeof(float**));
 		for (int i = 0; i < w.n_goals; i++){
@@ -940,7 +1015,7 @@ void create_world(int n)
 
 		w.n_obs = 2;
 		float obs_arr[2][6] = { { 15.0f, 0.0f, 0.0f, 5.0f, 20.0f, 10.0f },
-		{ 30.0f, 5.0f, 0.0f, 5.0f, 20.0f, 10.0f } };
+								{ 30.0f, 5.0f, 0.0f, 5.0f, 20.0f, 10.0f } };
 
 		w.obs = (float**)malloc(w.n_obs * sizeof(float**));
 		for (int i = 0; i < w.n_obs; i++){
@@ -955,8 +1030,8 @@ void create_world(int n)
 
 		w.n_goals = 3;
 		float goal_arr[3][5] = { { 17.5f, 22.5f, 5.0f, 0.0f, 2.5f },
-		{ 32.5f, 2.5f, 5.0f, 0.0f, 2.5f },
-		{ 48.0f, 23.0f, 5.0f, 0.0f, 1.0f } };
+								 { 32.5f, 2.5f, 5.0f, 0.0f, 2.5f },
+								 { 48.0f, 23.0f, 5.0f, 0.0f, 2.0f } };
 
 		w.goals = (float**)malloc(w.n_goals * sizeof(float**));
 		for (int i = 0; i < w.n_goals; i++){
@@ -976,7 +1051,7 @@ bool goal_reached(node* n, node* goal, int gn)
 {
 	if (n == NULL) return false;
 	if (norm(n, goal) <= w.goals[gn][4]) { // If in region
-		n->cost = 0.0f;
+		//n->cost = (float) gn * (-10000.0f);
 		return true;
 	}
 	if (goal_reached(n->next, goal, gn)) return true; // Recursively iterate
